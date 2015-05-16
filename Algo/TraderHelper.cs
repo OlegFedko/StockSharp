@@ -2364,8 +2364,9 @@ namespace StockSharp.Algo
 		/// <param name="to">Окончание диапазона экспираций.</param>
 		/// <param name="getSecurity">Функция для получения инструмента по коду.</param>
 		/// <param name="throwIfNotExists">Сгенерировать исключение, если какой-либо из инструментов отсутствует.</param>
+		/// <param name="monthPeriod">Периодичность фьючерсов в месяцах (по умолчанию 3 месяца)</param>
 		/// <returns>Экспирирующиеся инструменты.</returns>
-		public static IEnumerable<Security> GetFortsJumps(this string baseCode, DateTime from, DateTime to, Func<string, Security> getSecurity, bool throwIfNotExists = true)
+		public static IEnumerable<Security> GetFortsJumps(this string baseCode, DateTime @from, DateTime to, Func<string, Security> getSecurity, bool throwIfNotExists = true, int monthPeriod = 3)
 		{
 			if (baseCode.IsEmpty())
 				throw new ArgumentNullException("baseCode");
@@ -2381,27 +2382,12 @@ namespace StockSharp.Algo
 				var monthFrom = year == from.Year ? from.Month : 1;
 				var monthTo = year == to.Year ? to.Month : 12;
 
-				for (var month = monthFrom; month <= monthTo; month++)
-				{
-					char monthCode;
+			    monthFrom += (monthPeriod - 1) - (monthFrom - 1) % monthPeriod;
 
-					switch (month)
-					{
-						case 3:
-							monthCode = 'H';
-							break;
-						case 6:
-							monthCode = 'M';
-							break;
-						case 9:
-							monthCode = 'U';
-							break;
-						case 12:
-							monthCode = 'Z';
-							break;
-						default:
-							continue;
-					}
+				for (var month = monthFrom; month <= monthTo; month += monthPeriod)
+				{
+			        // http://en.wikipedia.org/wiki/Delivery_month
+			        var monthCode = "FGHJKMNQUVXZ"[month - 1];
 
 					var yearStr = year.To<string>();
 					var code = baseCode + monthCode + yearStr.Substring(yearStr.Length - 1, 1);
@@ -2430,8 +2416,9 @@ namespace StockSharp.Algo
 		/// <param name="from">Начало диапазона экспираций.</param>
 		/// <param name="to">Окончание диапазона экспираций.</param>
 		/// <param name="throwIfNotExists">Сгенерировать исключение, если какой-либо из инструментов для переданного <paramref name="continuousSecurity"/> отсутствует.</param>
+		/// <param name="monthPeriod">Периодичность фьючерсов в месяцах (по умолчанию 3 месяца)</param>
 		/// <returns>Экспирирующиеся инструменты.</returns>
-		public static IEnumerable<Security> GetFortsJumps(this ContinuousSecurity continuousSecurity, ISecurityProvider provider, string baseCode, DateTime from, DateTime to, bool throwIfNotExists = true)
+		public static IEnumerable<Security> GetFortsJumps(this ContinuousSecurity continuousSecurity, ISecurityProvider provider, string baseCode, DateTime @from, DateTime to, bool throwIfNotExists = true, int monthPeriod = 3)
 		{
 			if (continuousSecurity == null)
 				throw new ArgumentNullException("continuousSecurity");
@@ -2439,7 +2426,7 @@ namespace StockSharp.Algo
 			if (provider == null)
 				throw new ArgumentNullException("provider");
 
-			return baseCode.GetFortsJumps(from, to, code => provider.LookupByCode(code).FirstOrDefault(), throwIfNotExists);
+			return baseCode.GetFortsJumps(from, to, code => provider.LookupByCode(code).FirstOrDefault(), throwIfNotExists, monthPeriod);
 		}
 
 		/// <summary>
@@ -2450,9 +2437,10 @@ namespace StockSharp.Algo
 		/// <param name="baseCode">Базовая часть кода инструмента.</param>
 		/// <param name="from">Начало диапазона экспираций.</param>
 		/// <param name="to">Окончание диапазона экспираций.</param>
-		public static void FillFortsJumps(this ContinuousSecurity continuousSecurity, ISecurityProvider provider, string baseCode, DateTime from, DateTime to)
+		/// <param name="monthPeriod">Периодичность фьючерсов в месяцах (по умолчанию 3 месяца)</param>
+		public static void FillFortsJumps(this ContinuousSecurity continuousSecurity, ISecurityProvider provider, string baseCode, DateTime from, DateTime to, int monthPeriod = 3)
 		{
-			var securities = continuousSecurity.GetFortsJumps(provider, baseCode, from, to);
+			var securities = continuousSecurity.GetFortsJumps(provider, baseCode, from, to, monthPeriod: monthPeriod);
 
 			foreach (var security in securities)
 			{

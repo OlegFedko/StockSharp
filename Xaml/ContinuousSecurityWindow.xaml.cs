@@ -153,6 +153,7 @@ namespace StockSharp.Xaml
 			var split = SecurityId.Text.Split(new[] {'@'});
 
 			if (split.Any() && split[0] != string.Empty)
+                // TODO: Default monthPeriod (3) is used, but there are another futures exist (for example BR has 1 month period)
 				newSecurities = ContinuousSecurity.GetFortsJumps(SecurityProvider, split[0], DateTime.Today - TimeSpan.FromTicks(TimeHelper.TicksPerYear * 10), DateTime.Today, false);
 
 			if (!newSecurities.IsEmpty())
