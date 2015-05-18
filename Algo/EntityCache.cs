@@ -158,6 +158,9 @@ namespace StockSharp.Algo
 						else if (!trade.StringId.IsEmpty())
 							data.TradesByStrId.Remove(trade.StringId);
 						else
+							// TODO: Very poor performance
+							// For default TradesKeepCount == 100000 and single security there is 50000 removes from 150000 list
+							// At least it is memory moving for about 30 GB (50000 * 150000 * sizeof(ptr))
 							data.Trades.Remove(trade);
 					}
 				}
