@@ -2449,6 +2449,9 @@ namespace StockSharp.Algo
 
 				continuousSecurity.ExpirationJumps.Add(security, (DateTimeOffset)security.ExpiryDate);
 			}
+
+            if (continuousSecurity.Board == null && !continuousSecurity.InnerSecurities.IsEmpty())
+		        continuousSecurity.Board = continuousSecurity.InnerSecurities.First().Board;
 		}
 
 		private sealed class CashPosition : Position, IDisposable
