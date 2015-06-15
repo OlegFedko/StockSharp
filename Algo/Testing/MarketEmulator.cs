@@ -1151,10 +1151,20 @@ namespace StockSharp.Algo.Testing
 
 		private sealed class PortfolioEmulator
 		{
+		    private class PositionValue
+		    {
+                internal decimal Have { get; set; }
+                internal decimal Quoting { get; set; }
+                internal decimal Total
+                {
+                    get { return Have + Quoting; }
+                }
+            }
+
 			private readonly MarketEmulator _parent;
 			private readonly string _name;
 			private readonly PortfolioPnLManager _pnLManager;
-			private readonly Dictionary<SecurityId, RefPair<decimal, decimal>> _positions;
+            private readonly Dictionary<SecurityId, PositionValue> _positions;
 
 			private decimal _beginValue;
 			private decimal _currentValue;
@@ -1168,7 +1178,7 @@ namespace StockSharp.Algo.Testing
 				_name = name;
 
 				_pnLManager = new PortfolioPnLManager(name);
-				_positions = new Dictionary<SecurityId, RefPair<decimal, decimal>>();
+                _positions = new Dictionary<SecurityId, PositionValue>();
 			}
 
 			public void ProcessPositionChange(PositionChangeMessage posMsg, ICollection<Message> result)
@@ -1186,16 +1196,14 @@ namespace StockSharp.Algo.Testing
 					});
 				}
 
-				_positions[posMsg.SecurityId] = RefTuple.Create(beginValue, 0m);
+			    _positions[posMsg.SecurityId] = new PositionValue { Have = beginValue };
 
 				if (beginValue == 0m)
 					return;
 
 				result.Add(posMsg.Clone());
 
-				var reqMoney = GetRequiredMoney(posMsg.SecurityId, beginValue > 0 ? Sides.Buy : Sides.Sell);
-
-				_blockedValue += reqMoney * beginValue.Abs();
+			    _blockedValue += GetRequiredMoney(posMsg.SecurityId, beginValue);
 
 				result.Add(
 					new PortfolioChangeMessage
@@ -1221,21 +1229,19 @@ namespace StockSharp.Algo.Testing
 
 			public decimal? ProcessOrder(ExecutionMessage orderMsg, bool register, ICollection<Message> result)
 			{
-				var reqMoney = GetRequiredMoney(orderMsg.SecurityId, orderMsg.Side, orderMsg.Price);
+				var pos = _positions.SafeAdd(orderMsg.SecurityId, k => new PositionValue());
 
-				var pos = _positions.SafeAdd(orderMsg.SecurityId, k => RefTuple.Create(0m, 0m));
-
-				var sign = orderMsg.Side == Sides.Buy ? 1 : -1;
-				var totalPos = pos.First + pos.Second;
-
+                var prevBlocked = GetRequiredMoney(orderMsg.SecurityId, pos.Total, orderMsg.Price);
+                
+                var sign = orderMsg.Side == Sides.Buy ? 1 : -1;
 				if (register)
-					pos.Second += orderMsg.GetVolume() * sign;
+					pos.Quoting += orderMsg.GetVolume() * sign;
 				else
-					pos.Second -= orderMsg.GetBalance() * sign;
+					pos.Quoting -= orderMsg.GetBalance() * sign;
 
 				var commission = _parent._commissionManager.ProcessExecution(orderMsg);
 
-				_blockedValue += ((pos.First + pos.Second).Abs() - totalPos.Abs()) * reqMoney;
+			    _blockedValue += GetRequiredMoney(orderMsg.SecurityId, pos.Total, orderMsg.Price) - prevBlocked;
 
 				result.Add(CreateChangeMessage(orderMsg.ServerTime));
 
@@ -1251,16 +1257,12 @@ namespace StockSharp.Algo.Testing
 				tradeMsg.Commission = _parent._commissionManager.ProcessExecution(tradeMsg);
 
 				bool isNew;
-				var pos = _positions.SafeAdd(tradeMsg.SecurityId, k => RefTuple.Create(0m, 0m), out isNew);
+				var pos = _positions.SafeAdd(tradeMsg.SecurityId, k => new PositionValue(), out isNew);
 
-				var totalPos = pos.First + pos.Second;
 				var positionChange = tradeMsg.GetPosition();
-				var reqMoney = GetRequiredMoney(tradeMsg.SecurityId, tradeMsg.Side);
 				
-				pos.First += positionChange;
-				pos.Second -= positionChange;
-
-				_blockedValue += ((pos.First + pos.Second).Abs() - totalPos.Abs()) * reqMoney;
+				pos.Have += positionChange;
+				pos.Quoting -= positionChange;
 
 				if (isNew)
 				{
@@ -1280,7 +1282,7 @@ namespace StockSharp.Algo.Testing
 						PortfolioName = _name,
 						SecurityId = tradeMsg.SecurityId,
 					}
-					.Add(PositionChangeTypes.CurrentValue, pos.First));
+					.Add(PositionChangeTypes.CurrentValue, pos.Have));
 
 				result.Add(CreateChangeMessage(time));
 			}
@@ -1292,15 +1294,7 @@ namespace StockSharp.Algo.Testing
 				if (pos == null)
 					return;
 
-				_blockedValue = 0;
-
-				foreach (var position in _positions)
-				{
-					var value = position.Value.First + position.Value.Second;
-					var reqMoney = GetRequiredMoney(position.Key, value > 0 ? Sides.Buy : Sides.Sell);
-
-					_blockedValue += reqMoney * value.Abs();
-				}
+				_blockedValue = _positions.Sum(p => GetRequiredMoney(p.Key, p.Value.Total));
 
 				result.Add(
 					new PortfolioChangeMessage
@@ -1337,17 +1331,16 @@ namespace StockSharp.Algo.Testing
 
 			public string CheckRegistration(ExecutionMessage execMsg)
 			{
-				var reqMoney = GetRequiredMoney(execMsg.SecurityId, execMsg.Side, execMsg.Price);
-
 				// если задан баланс, то проверям по нему (для частично исполненных заявок)
 				var volume = execMsg.Balance ?? execMsg.GetVolume();
 
-				var pos = _positions.SafeAdd(execMsg.SecurityId, k => RefTuple.Create(0m, 0m));
+				var pos = _positions.SafeAdd(execMsg.SecurityId, k => new PositionValue());
 
 				var sign = execMsg.Side == Sides.Buy ? 1 : -1;
-				var totalPos = pos.First + pos.Second;
 
-				var needBlock = ((totalPos + volume * sign).Abs() - totalPos.Abs()) * reqMoney;
+                var prevBlocked = GetRequiredMoney(execMsg.SecurityId, pos.Total, execMsg.Price);
+                var nowBlocked = GetRequiredMoney(execMsg.SecurityId, pos.Total + volume * sign, execMsg.Price);
+			    var needBlock = nowBlocked - prevBlocked;
 
 				// при отрицательном значении снимается часть блокировки
 				if (needBlock < 0)
@@ -1362,26 +1355,29 @@ namespace StockSharp.Algo.Testing
 				return null;
 			}
 
-			private decimal GetRequiredMoney(SecurityId securityId, Sides side, decimal price = 0)
-			{
-				var state = _parent._secStates.TryGetValue(securityId);
+		    private decimal GetRequiredMoney(SecurityId securityId, decimal position, decimal price = 0)
+		    {
+		        var side = position > 0 ? Sides.Buy : Sides.Sell;
+		        var state = _parent._secStates.TryGetValue(securityId);
 
-				var reqMoney = state == null ? null : (decimal?)state.TryGetValue(side == Sides.Buy ? Level1Fields.MarginBuy : Level1Fields.MarginSell);
+		        var reqMoney = state == null ? null : (decimal?)state.TryGetValue(side == Sides.Buy ? Level1Fields.MarginBuy : Level1Fields.MarginSell);
 
-				// отсутствует информация о ГО
-				if (reqMoney == null)
-				{
-					if (price != 0)
-						reqMoney = price;
-					else
-					{
-						var secEmu = _parent.GetEmulator(securityId);
-						reqMoney = secEmu.GetBestPrice(side) ?? 0;
-					}
-				}
-
-				return reqMoney.Value;
-			}
+		        // отсутствует информация о ГО
+		        if (reqMoney == null)
+		        {
+		            if (price != 0)
+		            {
+		                reqMoney = price;
+		            }
+		            else
+		            {
+		                var secEmu = _parent.GetEmulator(securityId);
+		                reqMoney = secEmu.GetBestPrice(side) ?? 0;
+		            }
+                }
+		        
+                return reqMoney.Value * position.Abs();
+		    }
 		}
 
 		private IncrementalIdGenerator _orderIdGenerator = new IncrementalIdGenerator();
