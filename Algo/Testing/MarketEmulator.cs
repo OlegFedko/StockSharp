@@ -508,13 +508,14 @@ namespace StockSharp.Algo.Testing
 
 					if (_activeOrders.Remove(execution.OriginalTransactionId))
 					{
-						var replyMsg = CreateReply(order, time);
+                        _expirableOrders.Remove(order);
+                        
+                        var replyMsg = CreateReply(order, time);
 
 						replyMsg.OriginalTransactionId = execution.OriginalTransactionId;
 						replyMsg.OrderState = OrderStates.Done;
-						_expirableOrders.Remove(replyMsg);
 
-						// изменяем текущие котировки, добавляя туда наши цену и объем
+						// изменяем текущие котировки, убирая оттуда наши цену и объем
 						UpdateQuote(order, false);
 
 						// отправляем измененный стакан
