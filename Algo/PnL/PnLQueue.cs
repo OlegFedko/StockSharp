@@ -9,12 +9,18 @@
 	using StockSharp.Messages;
 
 	/// <summary>
-	/// Очередь расчета прибыли по потому сообщений.
+	/// Очередь расчета прибыли по потоку сообщений.
 	/// </summary>
 	public class PnLQueue
 	{
+	    private class PriceAndVolume
+	    {
+            internal decimal Price { get; set; }
+	        internal decimal Volume { get; set; }
+        }
+
 		private Sides _openedPosSide;
-		private readonly SynchronizedStack<RefPair<decimal, decimal>> _openedTrades = new SynchronizedStack<RefPair<decimal, decimal>>();
+		private readonly SynchronizedStack<PriceAndVolume> _openedTrades = new SynchronizedStack<PriceAndVolume>();
 		private decimal _multiplier;
 
 		/// <summary>
@@ -100,10 +106,10 @@
 						if (price == 0)
 							price = TradePrice;
 
-						return TraderHelper.GetPnL(t.First, t.Second, _openedPosSide, price);
+                        return TraderHelper.GetPnL(t.Price, t.Volume, _openedPosSide, price) * _multiplier;
 					}));
 
-				v = _unrealizedPnL = sum * _multiplier;
+				v = _unrealizedPnL = sum;
 				return v.Value;
 			}
 		}
@@ -132,44 +138,32 @@
 
 			lock (_openedTrades.SyncRoot)
 			{
-				if (_openedTrades.Count > 0)
-				{
-					var currTrade = _openedTrades.Peek();
+			    if (_openedPosSide != trade.Side)
+			    {
+                    while (_openedTrades.Count > 0 && volume > 0)
+			        {
+			            var currTrade = _openedTrades.Peek();
 
-					if (_openedPosSide != trade.Side)
-					{
-						while (volume > 0)
-						{
-							if (currTrade == null)
-								currTrade = _openedTrades.Peek();
+			            var diff = currTrade.Volume.Min(volume);
+			            closedVolume += diff;
 
-							var diff = currTrade.Second.Min(volume);
-							closedVolume += diff;
+                        pnl += TraderHelper.GetPnL(currTrade.Price, diff, _openedPosSide, price) * _multiplier;
 
-							pnl += TraderHelper.GetPnL(currTrade.First, diff, _openedPosSide, price);
+			            volume -= diff;
+			            currTrade.Volume -= diff;
 
-							volume -= diff;
-							currTrade.Second -= diff;
+			            if (currTrade.Volume == 0)
+    			            _openedTrades.Pop();
+			        }
+			    }
 
-							if (currTrade.Second != 0)
-								continue;
-
-							currTrade = null;
-							_openedTrades.Pop();
-
-							if (_openedTrades.Count == 0)
-								break;
-						}
-					}
-				}
-
-				if (volume > 0)
+			    if (volume > 0)
 				{
 					_openedPosSide = trade.Side;
-					_openedTrades.Push(RefTuple.Create(price, volume));
+					_openedTrades.Push(new PriceAndVolume { Price = price, Volume = volume });
 				}
 
-				RealizedPnL += _multiplier * pnl;
+				RealizedPnL += pnl;
 			}
 
 			return new PnLInfo(trade, closedVolume, pnl);
