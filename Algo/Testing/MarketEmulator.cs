@@ -688,7 +688,9 @@ namespace StockSharp.Algo.Testing
 			{
 				string matchError = null;
 
-				var executions = result == null ? null : new Dictionary<decimal, decimal>();
+			    var isUserOrder = result != null;
+
+			    var executions = isUserOrder ? new Dictionary<decimal, decimal>() : null;
 
 				var quotes = GetQuotes(order.Side.Invert());
 
@@ -716,7 +718,7 @@ namespace StockSharp.Algo.Testing
 						}
 
 						// если это пользовательская заявка и матчинг идет о заявку с таким же портфелем
-						if (executions != null && quote.PortfolioName == order.PortfolioName)
+                        if (isUserOrder && quote.PortfolioName == order.PortfolioName)
 						{
 							matchError = LocalizedStrings.Str1161Params.Put(quote.TransactionId, order.TransactionId);
 							this.AddErrorLog(matchError);
@@ -728,8 +730,7 @@ namespace StockSharp.Algo.Testing
 						if (volume <= 0)
 							throw new InvalidOperationException(LocalizedStrings.Str1162);
 
-						// если это пользовательская заявка
-						if (executions != null)
+                        if (isUserOrder)
 						{
 							executions[execPrice] = executions.TryGetValue(execPrice) + volume;
 							this.AddInfoLog(LocalizedStrings.Str1163Params, order.TransactionId, volume, execPrice);
@@ -758,8 +759,7 @@ namespace StockSharp.Algo.Testing
 						break;
 				}
 
-				// если это не пользовательская заявка
-				if (result == null)
+				if (!isUserOrder)
 					return;
 
 				leftBalance = order.GetBalance() - executions.Values.Sum();
